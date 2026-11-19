@@ -11,6 +11,7 @@ from t5_utils import initialize_model, initialize_optimizer_and_scheduler, save_
 from transformers import GenerationConfig
 from load_data import load_t5_data
 from utils import compute_metrics, save_queries_and_records
+from transformers import GenerationConfig, T5TokenizerFast
 
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 PAD_IDX = 0
@@ -128,6 +129,23 @@ def train_epoch(args, model, train_loader, optimizer, scheduler):
 
     return total_loss / total_tokens
         
+def decode_sql_batch(tokenizer, generated_ids):
+    """Decode SQL targets, where T5 uses its unknown token for '<'."""
+    skip_ids = set(tokenizer.all_special_ids)
+    skip_ids.remove(tokenizer.unk_token_id)
+
+    queries = []
+    for row in generated_ids.tolist():
+        sql_ids = [token_id for token_id in row if token_id not in skip_ids]
+        sql = tokenizer.decode(
+            sql_ids,
+            skip_special_tokens=False,
+            clean_up_tokenization_spaces=False,
+        )
+        queries.append(sql.replace(tokenizer.unk_token, "<"))
+    return queries
+
+
 def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_path, model_record_path):
     '''
     You must implement the evaluation loop to be using during training. We recommend keeping track
@@ -140,14 +158,122 @@ def eval_epoch(args, model, dev_loader, gt_sql_pth, model_sql_path, gt_record_pa
     '''
     # TODO
     model.eval()
-    return 0, 0, 0, 0, 0
+    total_loss = 0
+    total_tokens = 0
+    criterion = nn.CrossEntropyLoss()
+
+    # Prepare the tokenizer and collect predictions across batches.
+    tokenizer = T5TokenizerFast.from_pretrained("google-t5/t5-small")
+    all_sql = []
+
+    with torch.no_grad():
+        for batch in tqdm(dev_loader):
+            encoder_input, encoder_mask, decoder_input, decoder_targets, initial_decoder_inputs = batch
+
+            #Move tensors to the selected device.
+            encoder_input=encoder_input.to(DEVICE)
+            encoder_mask=encoder_mask.to(DEVICE)
+            decoder_input=decoder_input.to(DEVICE)
+            decoder_targets=decoder_targets.to(DEVICE)
+
+            # Run the model and compute loss on non-padding targets.
+            logits = model(
+                input_ids = encoder_input,
+                attention_mask= encoder_mask,
+                decoder_input_ids = decoder_input
+            )['logits']
+
+            non_pad = decoder_targets != PAD_IDX
+            loss = criterion(logits[non_pad],decoder_targets[non_pad])
+
+            num_tokens = torch.sum(non_pad).item()
+            total_loss += loss.item() * num_tokens
+            total_tokens += num_tokens
+
+            # Move decoder start tokens to the selected device.
+            initial_decoder_inputs = initial_decoder_inputs.to(DEVICE) 
+
+            # Generate SQL token IDs from the natural-language inputs.
+            generate_ids = model.generate(
+                input_ids =encoder_input,
+                    attention_mask=encoder_mask,
+                    decoder_input_ids=initial_decoder_inputs,
+                    max_new_tokens=512,
+                    num_beams=4,
+                    do_sample=False,
+                    )  
+            # Decode generated token IDs into SQL strings.
+            batch_sql = decode_sql_batch(tokenizer, generate_ids)
+            # Add each SQL string to the complete prediction list.
+            all_sql.extend(batch_sql)
+
+        eval_loss = total_loss / total_tokens
+
+        # Save predicted SQL and the records returned by the database.
+        save_queries_and_records(all_sql, model_sql_path, model_record_path)
+
+        # Compare predictions with the ground truth.
+        sql_em, record_em, record_f1, error_msgs = compute_metrics(
+            gt_sql_pth,
+            model_sql_path,
+            gt_record_path,
+            model_record_path,
+        )
+
+    
+        # Count failed SQL queries.
+        num_errors = 0
+
+        for msg in error_msgs:
+            if msg != "":
+                num_errors += 1
+
+        # Compute the fraction of failed queries.
+        error_rate = num_errors / len(error_msgs)
+
+        
+
+
+        
+    return eval_loss, record_f1, record_em, sql_em, error_rate
         
 def test_inference(args, model, test_loader, model_sql_path, model_record_path):
     '''
     You must implement inference to compute your model's generated SQL queries and its associated 
     database records. Implementation should be very similar to eval_epoch.
     '''
-    pass
+    model.eval()
+    tokenizer = T5TokenizerFast.from_pretrained("google-t5/t5-small")
+    all_sql = []
+
+    with torch.no_grad():
+        for encoder_input, encoder_mask, initial_decoder_inputs in tqdm(test_loader):
+            encoder_input = encoder_input.to(DEVICE)
+            encoder_mask = encoder_mask.to(DEVICE)
+            initial_decoder_inputs = initial_decoder_inputs.to(DEVICE)
+
+            # Generate SQL token IDs.
+            generate_ids = model.generate(
+            input_ids =encoder_input,
+            attention_mask=encoder_mask,
+            decoder_input_ids=initial_decoder_inputs,
+            max_new_tokens=512,
+            num_beams=4,
+            do_sample=False,
+            )  
+            # Decode generated token IDs into SQL strings.
+            batch_sql = decode_sql_batch(tokenizer, generate_ids)
+            # Add each SQL string to the complete prediction list.
+            all_sql.extend(batch_sql)
+        # Save predictions after processing every batch.
+        save_queries_and_records(all_sql, model_sql_path, model_record_path)
+
+    
+
+
+
+
+
 
 def main():
     # Get key arguments

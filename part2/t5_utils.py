@@ -20,7 +20,18 @@ def initialize_model(args):
     or training a T5 model initialized with the 'google-t5/t5-small' config
     from scratch.
     '''
-    pass
+    if args.finetune:
+        #load pretrained T5 weights
+        model = T5ForConditionalGeneration.from_pretrained("google-t5/t5-small")
+
+    else:
+        config = T5Config.from_pretrained("google-t5/t5-small")
+        model = T5ForConditionalGeneration(config)
+
+    #move the model to the selected device
+    model = model.to(DEVICE)
+    return model
+    
 
 def mkdir(dirpath):
     if not os.path.exists(dirpath):
@@ -31,11 +42,39 @@ def mkdir(dirpath):
 
 def save_model(checkpoint_dir, model, best):
     # Save model checkpoint to be able to load the model later
-    pass
+    if best:
+        subfolder = 'best'
+
+    else:
+        subfolder  = 'last'
+
+   # Build the path and save the model.
+    save_dir = os.path.join(checkpoint_dir, subfolder)
+    model.save_pretrained(save_dir) 
+
+    
 
 def load_model_from_checkpoint(args, best):
     # Load model from a checkpoint
-    pass
+    # Reconstruct the checkpoint directory used during training.
+    model_type = "ft" if args.finetune else "scr"
+    checkpoint_dir = os.path.join(
+        "checkpoints",
+        f"{model_type}_experiments",
+        args.experiment_name,
+    )
+
+    # Choose the checkpoint to load.
+    if best:
+        subfolder = "best"
+    else:
+        subfolder = "last"
+
+    load_dir = os.path.join(checkpoint_dir, subfolder)
+
+    # Load the saved model and move it to the selected device.
+    model = T5ForConditionalGeneration.from_pretrained(load_dir)
+    return model.to(DEVICE)    
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)

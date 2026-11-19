@@ -13,6 +13,7 @@ import argparse
 from nltk.corpus import wordnet
 from nltk import word_tokenize
 from nltk.tokenize.treebank import TreebankWordDetokenizer
+import re
 
 random.seed(0)
 
@@ -27,6 +28,22 @@ def example_transform(example):
 # You can randomly select each word with some fixed probability, and replace random letters in that word with one of the
 # nearest keys on the keyboard. You can vary the random probablity or which letters to use to achieve the desired accuracy.
 
+def introduce_typo(word):
+    if len(word) < 4 or not word.isalpha():
+        return word
+
+    chars = list(word)
+
+    #randomly choose the index of letter to be swapped, excluding first and last leeter
+    index = random.randint(1,len(chars)-3) 
+    chars_new = chars.copy()
+    #swap two letters
+    chars_new[index+1] = chars[index]
+    chars_new[index] = chars[index+1]
+    #join letter together
+    word_trans = "".join(chars_new)
+
+    return word_trans
 
 ### Rough guidelines --- synonym replacement
 # For synonyms, use can rely on wordnet (already imported here). Wordnet (https://www.nltk.org/howto/wordnet.html) includes
@@ -37,6 +54,19 @@ def example_transform(example):
 def custom_transform(example):
     ################################
     ##### YOUR CODE BEGINGS HERE ###
+    p = 0.4
+    parts = re.split(r"(\W+)", example['text'])
+
+    for i, part in enumerate(parts):
+        if len(part) < 4 or not part.isalpha():
+            continue
+        if random.random()<=p:
+            parts[i] = introduce_typo(part)
+
+    example['text'] = ''.join(parts)
+
+
+
 
     # Design and implement the transformation as mentioned in pdf
     # You are free to implement any transformation but the comments at the top roughly describe
@@ -44,7 +74,7 @@ def custom_transform(example):
 
     # You should update example["text"] using your transformation
 
-    raise NotImplementedError
+    
 
     ##### YOUR CODE ENDS HERE ######
 

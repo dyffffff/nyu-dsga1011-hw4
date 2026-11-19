@@ -44,8 +44,52 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     # Remember that pytorch uses gradient accumumlation so you need to use zero_grad (https://pytorch.org/tutorials/recipes/recipes/zeroing_out_gradients.html)
     # You can use progress_bar.update(1) to see the progress during training
     # You can refer to the pytorch tutorial covered in class for reference
+    '''
+    batch = {
+    "input_ids": ...,       # 影评对应的 token ID
+    "attention_mask": ...,  # 哪些位置是真实内容，哪些是 padding
+    "token_type_ids": ..., # BERT 的句子区分标记
+    "labels": ...,          # 每条影评的真实类别
+}
+    '''
+    # Accumulate loss across 100 batches.
+    loss_sum = 0.0
+    for epoch in range(num_epochs):
+        for batch in train_dataloader:
+            # 把这一批数据移到模型所在的设备
+            batch = {
+                key : value.to(device) for key, value in batch.items()
+            }
 
-    raise NotImplementedError
+            #clear grad
+            optimizer.zero_grad()
+
+            #feedforward, calculate loss
+            outputs = model(**batch)
+            loss = outputs.loss
+            #calculate grad
+            loss.backward()
+            #update weight
+            optimizer.step()
+            #update learning rate
+            lr_scheduler.step()
+            # move forward
+            progress_bar.update(1)
+
+            loss_sum += loss.item()
+
+            if progress_bar.n%100 == 0:
+                print(
+                    f"step={progress_bar.n}/{num_training_steps}, "
+                    f"avg_loss={loss_sum / 100:.4f}",
+                    flush=True,
+                )
+                loss_sum = 0.0
+
+
+
+
+  
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -93,7 +137,42 @@ def create_augmented_dataloader(args, dataset):
     # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
     # You may find it helpful to see how the dataloader was created at other place in this code.
 
-    raise NotImplementedError
+
+    train_dataset = dataset['train']
+    # Shuffle and select 5,000 training examples.
+    augmented_dataset = train_dataset.shuffle(seed=42).select(range(5000))
+
+    #Apply custom_transform to the selected examples.
+    augmented_dataset = augmented_dataset.map(custom_transform,load_from_cache_file=False) #逐条变换
+
+    #merge 2 dataset
+    augmented_dataset = datasets.concatenate_datasets([augmented_dataset,train_dataset])
+
+
+    #把文本转换成模型输入
+    augmented_dataset = augmented_dataset.map(tokenize_function, batched=True)
+
+    '''
+    调用 .map(tokenize_function, batched=True) 后，新字段会加进去，原来的字段仍然保留：
+# Schematic example after tokenization.
+{
+    "text": "Great movie!",
+    "label": 1,
+    "input_ids": [...],
+    "attention_mask": [...],
+    "token_type_ids": [...]
+}
+BERT 使用 input_ids 等数字张量来处理影评。原始的 "Great movie!" 
+字符串已经完成了转换，所以从训练用的数据集里移除 text 列即可
+    '''
+    augmented_dataset = augmented_dataset.remove_columns(['text'])
+    
+    augmented_dataset = augmented_dataset.rename_column('label','labels')
+    # 取样时返回 PyTorch tensor
+    augmented_dataset.set_format('torch')
+
+    # 样本组织成 batch
+    train_dataloader = DataLoader(augmented_dataset,batch_size=args.batch_size,shuffle=True)
 
     ##### YOUR CODE ENDS HERE ######
 
