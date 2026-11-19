@@ -58,4 +58,4 @@ PY
 
 The learning-rate schedule spans 30 epochs. Dev Record F1 peaked at epoch 25 (71.36%), and this checkpoint generated the 432 Q7 test queries. Epochs 26–30 resumed from epoch 25 with a fresh AdamW state after the job reached its time limit. Dev and test generation use four beams, a limit of 512 new tokens, and no sampling. `decode_sql_batch` restores the SQL `<` operator when decoding.
 
-The Q7 Google Drive folder should contain `model.safetensors`, `config.json`, and `generation_config.json` from the epoch-25 checkpoint. The tokenizer used with it is `google-t5/t5-small`.
+The Q7 Google Drive folder contains the epoch-25 checkpoint in four `.safetensors` weight files, plus `model.safetensors.index.json`, `config.json`, and `generation_config.json`. Download all seven files into one directory and load it with `T5ForConditionalGeneration.from_pretrained(checkpoint_dir)`. All 131 saved tensors match the original checkpoint byte for byte. The tokenizer is `google-t5/t5-small`.
